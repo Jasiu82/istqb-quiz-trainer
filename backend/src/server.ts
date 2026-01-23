@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import quizRoutes from './routes/quiz.routes.js';
+import syllabusRoutes from './routes/syllabus.routes.js';
 
 // ES Modules equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -24,6 +25,7 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.use('/api/quiz', quizRoutes);
+app.use('/api/syllabus', syllabusRoutes);
 
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on http://localhost:${PORT}`);
