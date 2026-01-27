@@ -10,7 +10,8 @@ interface Props {
 export default function QuizMode({ onBack }: Props) {
   const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null);
   const [loading, setLoading] = useState(false);
-  const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
+  const [selectedAnswers, setSelectedAnswers] = useState<string[]>([]);
+  const [isSubmitted, setIsSubmitted] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [questionCount, setQuestionCount] = useState(1);
   const [selectedChapter, setSelectedChapter] = useState<number | null>(null);
@@ -19,9 +20,14 @@ export default function QuizMode({ onBack }: Props) {
   const [userStats, setUserStats] = useState<UserStatistics | null>(null);
   const [currentProgress, setCurrentProgress] = useState<QuestionProgress | null>(null);
 
+  // Funkcje pomocnicze dla multiple-choice
+  const isMultipleChoice = (q: Question | null): boolean => q?.correct.includes(',') ?? false;
+  const getRequiredCount = (q: Question | null): number => q?.correct.split(',').length ?? 1;
+
   const fetchQuestion = async () => {
     setLoading(true);
-    setSelectedAnswer(null);
+    setSelectedAnswers([]);
+    setIsSubmitted(false);
     setShowFeedback(false);
 
     try {
@@ -92,24 +98,61 @@ export default function QuizMode({ onBack }: Props) {
     fetchUserStatistics();
   }, []);
 
-  const handleAnswerClick = async (answer: string) => {
-    if (showFeedback) return;
-    setSelectedAnswer(answer);
+  // Toggle zaznaczenia odpowiedzi (bez walidacji)
+  const handleAnswerClick = (answerKey: string) => {
+    if (isSubmitted) return; // Zablokuj po zatwierdzeniu
+
+    if (isMultipleChoice(currentQuestion)) {
+      // Multiple choice - toggle zaznaczenia
+      setSelectedAnswers(prev => {
+        if (prev.includes(answerKey)) {
+          return prev.filter(a => a !== answerKey);
+        } else {
+          return [...prev, answerKey].sort();
+        }
+      });
+    } else {
+      // Single choice - tylko jedna odpowiedź
+      setSelectedAnswers([answerKey]);
+    }
+  };
+
+  // Walidacja po kliknięciu "Zatwierdź odpowiedź"
+  const handleSubmitAnswer = async () => {
+    if (selectedAnswers.length === 0 || isSubmitted) return;
+
+    const correctAnswers = currentQuestion!.correct.split(',').map(a => a.trim()).sort();
+    const userAnswers = [...selectedAnswers].sort();
+
+    const isAnswerCorrect =
+      correctAnswers.length === userAnswers.length &&
+      correctAnswers.every((ans, idx) => ans === userAnswers[idx]);
+
+    setIsSubmitted(true);
     setShowFeedback(true);
 
     if (currentQuestion) {
-      const isCorrect = answer === currentQuestion.correct;
       const questionId = `${currentQuestion.chapter}-Q${questionCount}`;
-      await recordAnswer(questionId, answer, isCorrect);
+      const userAnswerString = selectedAnswers.join(',');
+      await recordAnswer(questionId, userAnswerString, isAnswerCorrect);
     }
   };
 
   const handleNextQuestion = () => {
     setQuestionCount(questionCount + 1);
+    setSelectedAnswers([]);
+    setIsSubmitted(false);
     fetchQuestion();
   };
 
-  const isCorrect = selectedAnswer === currentQuestion?.correct;
+  // Oblicz czy odpowiedź jest poprawna (dla wyświetlania feedback)
+  const isCorrect = (() => {
+    if (!currentQuestion || selectedAnswers.length === 0) return false;
+    const correctAnswers = currentQuestion.correct.split(',').map(a => a.trim()).sort();
+    const userAnswers = [...selectedAnswers].sort();
+    return correctAnswers.length === userAnswers.length &&
+      correctAnswers.every((ans, idx) => ans === userAnswers[idx]);
+  })();
 
   return (
     <div style={{ padding: '20px', maxWidth: '900px', margin: '0 auto', backgroundColor: '#f5f7fa', minHeight: '100vh' }}>
@@ -255,28 +298,53 @@ export default function QuizMode({ onBack }: Props) {
             {currentQuestion.question}
           </h3>
 
+          {/* Info o multiple-choice */}
+          {isMultipleChoice(currentQuestion) && !isSubmitted && (
+            <div style={{
+              padding: '10px 15px',
+              backgroundColor: '#e3f2fd',
+              borderRadius: '5px',
+              marginBottom: '15px',
+              color: '#1565c0',
+              fontSize: '14px'
+            }}>
+              Wybierz {getRequiredCount(currentQuestion)} odpowiedzi (wybrano: {selectedAnswers.length})
+            </div>
+          )}
+
           <div>
             {Object.entries(currentQuestion.answers).map(([key, value]) => {
+              const isSelected = selectedAnswers.includes(key);
+              const correctAnswers = currentQuestion.correct.split(',').map(a => a.trim());
+              const isCorrectAnswer = correctAnswers.includes(key);
+
+              // Określ styl na podstawie stanu
               let bgColor = 'white';
               let borderColor = '#ddd';
 
-              if (showFeedback) {
-                if (key === currentQuestion.correct) {
+              if (isSubmitted && showFeedback) {
+                // PO ZATWIERDZENIU - kolorowanie walidacyjne
+                if (isCorrectAnswer) {
                   bgColor = '#d4edda';
                   borderColor = '#28a745';
-                } else if (key === selectedAnswer) {
+                } else if (isSelected && !isCorrectAnswer) {
                   bgColor = '#f8d7da';
                   borderColor = '#dc3545';
                 }
+              } else if (isSelected) {
+                // PRZED ZATWIERDZENIEM - zaznaczenie użytkownika
+                bgColor = '#e3f2fd';
+                borderColor = '#2196f3';
               }
 
               return (
                 <button
                   key={key}
                   onClick={() => handleAnswerClick(key)}
-                  disabled={showFeedback}
+                  disabled={isSubmitted}
                   style={{
-                    display: 'block',
+                    display: 'flex',
+                    alignItems: 'center',
                     width: '100%',
                     padding: '15px',
                     marginBottom: '10px',
@@ -284,16 +352,61 @@ export default function QuizMode({ onBack }: Props) {
                     backgroundColor: bgColor,
                     border: `2px solid ${borderColor}`,
                     borderRadius: '5px',
-                    cursor: showFeedback ? 'default' : 'pointer',
+                    cursor: isSubmitted ? 'default' : 'pointer',
                     fontSize: '15px',
                     color: '#333'
                   }}
                 >
-                  <strong>{key})</strong> {value}
+                  {/* Checkbox/Radio indicator */}
+                  <span style={{
+                    width: '22px',
+                    height: '22px',
+                    marginRight: '12px',
+                    border: `2px solid ${isSelected ? '#2196f3' : '#ccc'}`,
+                    borderRadius: isMultipleChoice(currentQuestion) ? '4px' : '50%',
+                    backgroundColor: isSelected ? '#2196f3' : 'white',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0
+                  }}>
+                    {isSelected && (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
+                        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                      </svg>
+                    )}
+                  </span>
+                  <span>
+                    <strong>{key})</strong> {value}
+                  </span>
                 </button>
               );
             })}
           </div>
+
+          {/* Przycisk Zatwierdź odpowiedź */}
+          {!isSubmitted && selectedAnswers.length > 0 && (
+            <div style={{ marginTop: '20px', textAlign: 'center' }}>
+              <button
+                onClick={handleSubmitAnswer}
+                disabled={isMultipleChoice(currentQuestion) && selectedAnswers.length !== getRequiredCount(currentQuestion)}
+                style={{
+                  padding: '12px 40px',
+                  backgroundColor: (!isMultipleChoice(currentQuestion) || selectedAnswers.length === getRequiredCount(currentQuestion))
+                    ? '#28a745' : '#6c757d',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '5px',
+                  cursor: (!isMultipleChoice(currentQuestion) || selectedAnswers.length === getRequiredCount(currentQuestion))
+                    ? 'pointer' : 'not-allowed',
+                  fontSize: '16px',
+                  fontWeight: 'bold'
+                }}
+              >
+                Zatwierdz odpowiedz
+              </button>
+            </div>
+          )}
 
           {showFeedback && (
             <div style={{
@@ -305,8 +418,13 @@ export default function QuizMode({ onBack }: Props) {
               <h4 style={{ color: '#333', margin: '0 0 10px 0' }}>
                 {isCorrect ? 'Poprawna odpowiedz!' : 'Niepoprawna odpowiedz'}
               </h4>
+              {!isCorrect && (
+                <p style={{ color: '#333', margin: '0 0 10px 0' }}>
+                  <strong>Poprawna odpowiedz:</strong> {currentQuestion.correct}
+                </p>
+              )}
               <p style={{ color: '#333', margin: '0 0 15px 0' }}>
-                <strong>Wyjasnienie:</strong> {currentQuestion.explanation}
+                <strong>Wyjasnienie:</strong> {currentQuestion.explanation || 'Brak wyjaśnienia w bazie danych.'}
               </p>
               <button
                 onClick={handleNextQuestion}
